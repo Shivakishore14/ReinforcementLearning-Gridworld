@@ -5,7 +5,8 @@ const NORTH = 'north', SOUTH = 'south', EAST = 'east', WEST = 'west';
 
 const TYPES = Object.freeze({STONE:1, EMPTY:2, GOAL:3, PIT: 4})
 const ACTIONS = Object.freeze({UP:1, DOWN:2, RIGHT:3, LEFT: 4})
-
+const ACTION_DIR = Object.freeze({1: 'NORTH', 2: 'SOUTH', 3:'EAST', 4: 'WEST'})
+const DIR_ACTION = Object.freeze({NORTH: 1,SOUTH : 2,EAST: 3, WEST: 4})
 const GOALS = [[1,4]]
 const PITS = [[2,4]]
 const STONES = [[2,2]]
@@ -13,9 +14,14 @@ const STEP_REWARD = 0
 const GOAL_REWARD = 1
 const PIT_REWARD = -1
 
+const DISCOUNT_FACTOR = 0.9
+const MAX_STEPS = 30
+const N_LEARN_STEPS = 10
+
 var player_pos = [3,1]
 var game_play_records = []
 var game_play_steps_count = 0
+var game_over = false
 
 function create_box(row, column, size, type) {
   box_y = row * size + row * 3
@@ -102,7 +108,7 @@ function draw_box(box) {
       }
       triangle(x1, y1, x2, y2, x3, y3);
       fill(0);
-      text(text_, text_x, text_y);
+      text(text_.toFixed(2), text_x, text_y);
       fill(255)
     }
     // // NORTH
@@ -121,9 +127,8 @@ function draw_box(box) {
   }
   fill(255)
 }
-function setup() {
-  // put setup code here
-  createCanvas(800, 800);
+
+function draw_all_boxes() {
   for (b_row in all_boxes) {
     for (b_col in all_boxes[b_row]) {
       box = all_boxes[b_row][b_col]
@@ -132,8 +137,14 @@ function setup() {
       }
     }
   }
+}
+function setup() {
+  // put setup code here
+  createCanvas(800, 500);
+  draw_all_boxes()
 
   draw_player()
+  // rand_play()
 }
 
 function draw_player() {
@@ -163,24 +174,35 @@ function check_box_reward(box){
 }
 
 function check_game_end(current_box){
-  if (game_play_steps_count > 20) {
+  if (game_play_steps_count > MAX_STEPS) {
     return true
   } else if (current_box.type === TYPES.PIT | current_box.type === TYPES.GOAL) {
     return true
   }
   return false
 }
-
-function update_game_play(old_box, new_box, action) {
-  if (check_game_end(new_box)) {
-    //yes
-    document.onkeydown = undefined;
+function calc_rewards(new_box){
+  console.log("UPDATING WEIGHTS", game_play_steps_count, MAX_STEPS)
+  last_reward = check_box_reward(new_box)
+  while (game_play_records.length != 0) {
+    game_play = game_play_records.pop()
+    reward = game_play.step_reward + DISCOUNT_FACTOR * last_reward
+    game_play.box.weight[ACTION_DIR[game_play.action]] = reward
+    last_reward = reward
   }
-  game_play = {box: old_box, action: action}
+}
+function update_game_play(old_box, new_box, action) {
+  game_play = {box: old_box, action: action, step_reward: check_box_reward(old_box)}
   game_play_records.push(game_play);
-
+  if (check_game_end(new_box)) {
+    game_over = true;
+    //yes
+    if (game_play_steps_count < MAX_STEPS)
+      calc_rewards(new_box)
+  }
 }
 function move_player(action) {
+  console.log("MOVING PLAYER : ", action);
   playerbox_prev = all_boxes[player_pos[0]][player_pos[1]]
   let new_x = player_pos[0], new_y = player_pos[1];
   if (action == ACTIONS.UP) {
@@ -231,4 +253,83 @@ function checkKey(e) {
        move_player(ACTIONS.RIGHT)
     }
 
+}
+function getRandomInt(max) {
+  return Math.floor(Math.random() * Math.floor(max));
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function random_play() {
+  game_over = false
+  player_pos = [3,1]
+  draw_all_boxes()
+
+  draw_player()
+  while(!game_over){
+    action = getRandomInt(4) + 1
+    await sleep(200);
+    move_player(action)
+  }
+  draw_all_boxes()
+  draw_player()
+}
+
+async function n_games(n){
+  n = n || N_LEARN_STEPS;
+  for (i=0; i<n; i++){
+    console.log("RUNNING PLAY", i);
+    await learn_play()
+  }
+}
+async function learn_play() {
+  game_over = false
+  player_pos = [3,1]
+  game_over = false
+  game_play_steps_count = 0
+  draw_all_boxes()
+  draw_player()
+  while(!game_over){
+    game_play_steps_count += 1
+    current_box = all_boxes[player_pos[0]][player_pos[1]]
+    max_score = -10000 ;// least score
+
+    let sum = 0;
+    probablities = []
+    for (w in current_box.weight) {
+      sum = sum + current_box.weight[w];
+    }
+    last_prob_end_index = 0;
+    best_action = [];
+
+    for (w in current_box.weight) {
+      score = current_box.weight[w];
+      score = score.toFixed(2)
+      if (score > max_score) {
+        max_score = score
+        best_action = [];
+        action_1 = DIR_ACTION[w];
+        best_action.push(action_1);
+      } else if (score === max_score) {
+        action_1 = DIR_ACTION[w];
+        best_action.push(action_1);
+      }
+    }
+
+    rand = Math.random()
+    if (rand < 0.15) {
+      best_action = [getRandomInt(4) + 1]
+      console.log('radomized action')
+    }
+
+    selection = getRandomInt(best_action.length)
+
+    console.log('best action', best_action[selection])
+    move_player(best_action[selection])
+    draw_all_boxes()
+    draw_player()
+    await sleep(200);
+  }
 }
